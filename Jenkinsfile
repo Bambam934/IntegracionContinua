@@ -86,12 +86,35 @@ OVERRIDE
             }
         }
 
+        stage('Diagnosticar') {
+            steps {
+                script {
+                    echo "🔍 Diagnosticando contenedor de la API..."
+                    sh '''
+                    echo "📁 Archivos en /app del contenedor:"
+                    docker compose exec -T api ls -la /app/ || true
+                    
+                    echo ""
+                    echo "🐍 Verificando que Python puede importar main:"
+                    docker compose exec -T api python -c "import sys; sys.path.insert(0, '/app'); import main; print('✓ main importado exitosamente')" || echo "⚠️ Fallo al importar main"
+                    
+                    echo ""
+                    echo "📋 Logs del contenedor api:"
+                    docker compose logs api --tail=50 || true
+                    '''
+                }
+            }
+        }
+
         stage('Healthcheck') {
             steps {
                 script {
                     echo "🏥 Verificando salud de la API..."
                     sh '''
-                    max_attempts=20
+                    echo "⏳ Esperando 15 segundos antes de healthcheck..."
+                    sleep 15
+                    
+                    max_attempts=30
                     attempt=1
                     
                     while [ $attempt -le $max_attempts ]; do
@@ -99,12 +122,17 @@ OVERRIDE
                             echo "✓ API está saludable en intento $attempt"
                             exit 0
                         fi
-                        echo "Intento $attempt/$max_attempts: API no lista aún..."
+                        
+                        echo "Intento $attempt/$max_attempts: API no lista..."
+                        docker compose logs api --tail=3
+                        
                         attempt=$((attempt + 1))
-                        sleep 3
+                        sleep 2
                     done
                     
-                    echo "✗ API no respondió a tiempo"
+                    echo "✗ API no respondió después de $max_attempts intentos"
+                    echo ""
+                    echo "📋 Logs completos de la API:"
                     docker compose logs api
                     exit 1
                     '''
