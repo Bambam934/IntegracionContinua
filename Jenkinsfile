@@ -91,9 +91,6 @@ EOF
                         cat > docker-compose.override.yml <<'OVERRIDE'
 version: "3.9"
 services:
-  api:
-    volumes:
-      - /app:/app
   frontend:
     volumes: []
 OVERRIDE
