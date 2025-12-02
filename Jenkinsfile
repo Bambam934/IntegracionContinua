@@ -4,6 +4,7 @@ pipeline {
     environment {
         COMPOSE_PROJECT_NAME = "vault-ci-${BUILD_NUMBER}"
         CODECOV_TOKEN = credentials('codecov-token')
+        DOCKER_BUILDKIT = "1"
     }
 
     options {
@@ -15,11 +16,14 @@ pipeline {
     stages {
         stage('Limpiar') {
             steps {
-                sh '''
-                [ -f docker-compose.override.yml ] && mv docker-compose.override.yml docker-compose.override.yml.bak || true
-                docker compose down -v --remove-orphans 2>/dev/null || true
-                sleep 2
-                '''
+                script {
+                    echo "🧹 Limpiando contenedores previos..."
+                    sh '''
+                    [ -f docker-compose.override.yml ] && mv docker-compose.override.yml docker-compose.override.yml.bak || true
+                    docker compose down -v --remove-orphans 2>/dev/null || true
+                    sleep 2
+                    '''
+                }
             }
         }
 
@@ -29,23 +33,30 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build imágenes') {
             steps {
-                sh 'docker compose build --no-cache api db'
+                script {
+                    echo "🔨 Construyendo imágenes Docker..."
+                    sh '''
+                    docker compose build --no-cache api db
+                    '''
+                }
             }
         }
 
         stage('Levantar stack') {
             steps {
-                withCredentials([
-                    string(credentialsId: 'vault-db-user', variable: 'CI_DB_USER'),
-                    string(credentialsId: 'vault-db-password', variable: 'CI_DB_PASSWORD'),
-                    string(credentialsId: 'vault-db-name', variable: 'CI_DB_NAME'),
-                    string(credentialsId: 'vault-secret-key', variable: 'CI_SECRET_KEY'),
-                    string(credentialsId: 'vault-fernet-key', variable: 'CI_FERNET_KEY')
-                ]) {
-                    sh '''
-                    cat > .env <<EOF
+                script {
+                    echo "🚀 Levantando servicios (db + api)..."
+                    withCredentials([
+                        string(credentialsId: 'vault-db-user', variable: 'CI_DB_USER'),
+                        string(credentialsId: 'vault-db-password', variable: 'CI_DB_PASSWORD'),
+                        string(credentialsId: 'vault-db-name', variable: 'CI_DB_NAME'),
+                        string(credentialsId: 'vault-secret-key', variable: 'CI_SECRET_KEY'),
+                        string(credentialsId: 'vault-fernet-key', variable: 'CI_FERNET_KEY')
+                    ]) {
+                        sh '''
+                        cat > .env <<EOF
 DB_USER=${CI_DB_USER}
 DB_PASSWORD=${CI_DB_PASSWORD}
 DB_NAME=${CI_DB_NAME}
@@ -56,96 +67,163 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 FERNET_KEY=${CI_FERNET_KEY}
 EOF
-                    docker compose up -d db api
-                    sleep 10
-                    '''
+
+                        cat > docker-compose.override.yml <<'OVERRIDE'
+version: "3.9"
+services:
+  api:
+    volumes: []
+OVERRIDE
+
+                        docker compose up -d db api
+                        echo "⏳ Esperando a que la BD esté lista..."
+                        sleep 8
+                        '''
+                    }
                 }
             }
         }
 
         stage('Healthcheck') {
             steps {
-                sh '''
-                max_attempts=20
-                attempt=1
-                while [ $attempt -le $max_attempts ]; do
-                    if docker compose exec -T api curl -sf http://localhost:5000/docs > /dev/null 2>&1; then
-                        echo "✓ API healthy"
-                        exit 0
+                script {
+                    echo "🏥 Verificando salud de la API..."
+                    sh '''
+                    max_attempts=20
+                    attempt=1
+                    
+                    while [ $attempt -le $max_attempts ]; do
+                        if docker compose exec -T api curl -sf http://localhost:5000/docs > /dev/null 2>&1; then
+                            echo "✓ API está saludable en intento $attempt"
+                            exit 0
+                        fi
+                        echo "Intento $attempt/$max_attempts: API no lista aún..."
+                        attempt=$((attempt + 1))
+                        sleep 3
+                    done
+                    
+                    echo "✗ API no respondió a tiempo"
+                    docker compose logs api
+                    exit 1
+                    '''
+                }
+            }
+        }
+
+        stage('Ejecutar tests') {
+            steps {
+                script {
+                    echo "🧪 Ejecutando pytest con cobertura..."
+                    sh '''
+                    docker compose exec -T api pytest \
+                      --cov=. \
+                      --cov-report=xml \
+                      --cov-report=html \
+                      --cov-report=term-missing \
+                      -v \
+                      --tb=short
+                    '''
+                }
+            }
+        }
+
+        stage('Copiar reportes') {
+            steps {
+                script {
+                    echo "📊 Copiando reportes..."
+                    sh '''
+                    mkdir -p coverage htmlcov
+                    docker compose cp api:/app/coverage.xml ./coverage.xml || true
+                    docker compose cp api:/app/htmlcov ./htmlcov || true
+                    '''
+                }
+            }
+        }
+
+        stage('Upload a Codecov') {
+            steps {
+                script {
+                    echo "☁️ Subiendo coverage a Codecov..."
+                    sh '''
+                    if [ -f coverage.xml ]; then
+                        curl -Os https://uploader.codecov.io/latest/linux/codecov
+                        chmod +x codecov
+                        ./codecov -t ${CODECOV_TOKEN} -f coverage.xml || true
+                    else
+                        echo "⚠️ No se encontró coverage.xml"
                     fi
-                    echo "Wait... attempt $attempt/$max_attempts"
-                    attempt=$((attempt + 1))
-                    sleep 3
-                done
-                echo "API timeout"
-                docker compose logs api
-                exit 1
-                '''
+                    '''
+                }
             }
         }
 
-        stage('Tests') {
+        stage('Smoke test') {
             steps {
-                sh '''
-                docker compose exec -T api pytest \
-                  --cov=. \
-                  --cov-report=xml \
-                  --cov-report=html \
-                  --cov-report=term-missing \
-                  -v
-                '''
-            }
-        }
-
-        stage('Reportes') {
-            steps {
-                sh '''
-                mkdir -p coverage
-                docker compose cp api:/app/coverage.xml ./coverage.xml || true
-                docker compose cp api:/app/htmlcov ./htmlcov || true
-                '''
-            }
-        }
-
-        stage('Codecov') {
-            steps {
-                sh '''
-                if [ -f coverage.xml ]; then
-                    curl -Os https://uploader.codecov.io/latest/linux/codecov
-                    chmod +x codecov
-                    ./codecov -t ${CODECOV_TOKEN} -f coverage.xml || true
-                fi
-                '''
-            }
-        }
-
-        stage('Smoke Test') {
-            steps {
-                sh '''
-                EMAIL="ci-${BUILD_NUMBER}-${RANDOM}@example.com"
-                docker compose exec -T api curl -s -X POST http://localhost:5000/usuarios/registro \
-                  -H "Content-Type: application/json" \
-                  -d "{\"nombre\":\"CI\",\"apellido\":\"User\",\"correo\":\"$EMAIL\",\"contrasena\":\"ci1234\"}" \
-                  | grep -q "id" || exit 1
-                '''
+                script {
+                    echo "💨 Ejecutando smoke test..."
+                    sh '''
+                    EMAIL="ci-${BUILD_NUMBER}-${RANDOM}@example.com"
+                    
+                    response=$(docker compose exec -T api curl -s -X POST \
+                      http://localhost:5000/usuarios/registro \
+                      -H "Content-Type: application/json" \
+                      -d "{
+                        \\"nombre\\": \\"CI\\",
+                        \\"apellido\\": \\"User\\",
+                        \\"correo\\": \\"$EMAIL\\",
+                        \\"contrasena\\": \\"ci1234\\"
+                      }")
+                    
+                    if echo "$response" | grep -q "id"; then
+                        echo "✓ Smoke test pasó: usuario registrado exitosamente"
+                    else
+                        echo "✗ Smoke test falló: $response"
+                        exit 1
+                    fi
+                    '''
+                }
             }
         }
     }
 
     post {
         always {
-            sh '''
-            docker compose down -v --remove-orphans || true
-            [ -f docker-compose.override.yml.bak ] && mv docker-compose.override.yml.bak docker-compose.override.yml || true
-            '''
+            script {
+                echo "🧹 Limpieza final..."
+                sh '''
+                docker compose down -v --remove-orphans || true
+                [ -f docker-compose.override.yml.bak ] && mv docker-compose.override.yml.bak docker-compose.override.yml || true
+                '''
+            }
         }
 
         success {
-            echo "✅ Pipeline OK"
+            script {
+                echo "✅ Pipeline completado exitosamente"
+                if [ -d "htmlcov" ]; then
+                    echo "📊 Coverage report disponible en ./htmlcov/index.html"
+                fi
+            }
         }
 
         failure {
-            sh 'docker compose logs api --tail=30 || true'
+            script {
+                echo "❌ Pipeline falló"
+                sh '''
+                echo "Últimos logs de la API:"
+                docker compose logs api --tail=50 || true
+                '''
+            }
+        }
+
+        unstable {
+            script {
+                echo "⚠️ Pipeline inestable - revisar logs"
+            }
+        }
+
+        cleanup {
+            cleanWs()
         }
     }
 }
