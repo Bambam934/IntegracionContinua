@@ -200,9 +200,11 @@ OVERRIDE
         success {
             script {
                 echo "✅ Pipeline completado exitosamente"
+                sh '''
                 if [ -d "htmlcov" ]; then
                     echo "📊 Coverage report disponible en ./htmlcov/index.html"
                 fi
+                '''
             }
         }
 
