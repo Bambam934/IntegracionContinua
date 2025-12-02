@@ -92,7 +92,8 @@ EOF
 version: "3.9"
 services:
   api:
-    volumes: []
+    volumes:
+      - /app:/app
   frontend:
     volumes: []
 OVERRIDE
