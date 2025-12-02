@@ -73,6 +73,8 @@ version: "3.9"
 services:
   api:
     volumes: []
+  frontend:
+    volumes: []
 OVERRIDE
 
                         docker compose up -d db api
