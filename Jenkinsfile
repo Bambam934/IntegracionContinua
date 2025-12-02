@@ -44,6 +44,26 @@ pipeline {
             }
         }
 
+        stage('Inspeccionar imagen') {
+            steps {
+                script {
+                    echo "🔬 Inspeccionando imagen de API antes de levantar..."
+                    sh '''
+                    echo "📦 Archivos en /app de la imagen api:"
+                    docker run --rm vault-ci-${BUILD_NUMBER}-api:latest ls -la /app/ || true
+                    
+                    echo ""
+                    echo "📄 Primeras líneas de main.py:"
+                    docker run --rm vault-ci-${BUILD_NUMBER}-api:latest head -20 /app/main.py || echo "❌ main.py no encontrado en imagen"
+                    
+                    echo ""
+                    echo "⚙️ CMD de la imagen:"
+                    docker inspect vault-ci-${BUILD_NUMBER}-api:latest | grep -A 3 '"Cmd"'
+                    '''
+                }
+            }
+        }
+
         stage('Levantar stack') {
             steps {
                 script {
