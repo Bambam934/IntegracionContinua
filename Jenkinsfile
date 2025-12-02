@@ -3,39 +3,39 @@ pipeline {
 
     environment {
         COMPOSE_PROJECT_NAME = "vault-ci-${BUILD_NUMBER}"
-        CODECOV_TOKEN = credentials('codecov-token')  // Agregar credential en Jenkins
+        CODECOV_TOKEN = credentials('codecov-token')
+    }
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
     stages {
         stage('Limpiar') {
             steps {
                 sh '''
-                echo "===> Desactivando override para CI..."
                 [ -f docker-compose.override.yml ] && mv docker-compose.override.yml docker-compose.override.yml.bak || true
-                
-                echo "===> Limpiando contenedores previos..."
                 docker compose down -v --remove-orphans 2>/dev/null || true
                 sleep 2
                 '''
             }
         }
 
-        stage('Checkout código') {
+        stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
-        stage('Build imágenes') {
+        stage('Build') {
             steps {
-                sh '''
-                echo "===> Construyendo imágenes..."
-                docker compose build api db
-                '''
+                sh 'docker compose build --no-cache api db'
             }
         }
 
-        stage('Levantar stack (db + api)') {
+        stage('Levantar stack') {
             steps {
                 withCredentials([
                     string(credentialsId: 'vault-db-user', variable: 'CI_DB_USER'),
@@ -56,80 +56,77 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 FERNET_KEY=${CI_FERNET_KEY}
 EOF
-
-                    echo "===> Levantando servicios..."
                     docker compose up -d db api
-
-                    echo "===> Esperando a que DB esté ready..."
-                    sleep 5
+                    sleep 10
                     '''
                 }
             }
         }
 
-        stage('Ejecutar tests con cobertura') {
+        stage('Healthcheck') {
             steps {
                 sh '''
-                echo "===> Ejecutando tests con pytest..."
-                
-                # Instalar dependencias de testing
-                docker compose exec -T api pip install pytest pytest-cov httpx
-                
-                # Ejecutar tests con coverage
-                docker compose exec -T api pytest --cov=. --cov-report=xml --cov-report=term-missing || true
-                
-                # Copiar coverage.xml desde el contenedor
-                docker compose cp api:/app/coverage.xml ./coverage.xml
-                
-                echo "===> Coverage report generado"
-                '''
-            }
-        }
-
-        stage('Upload a Codecov') {
-            steps {
-                sh '''
-                echo "===> Subiendo coverage a Codecov..."
-                
-                # Descargar Codecov uploader
-                curl -Os https://uploader.codecov.io/latest/linux/codecov
-                chmod +x codecov
-                
-                # Upload coverage
-                ./codecov -t ${CODECOV_TOKEN} -f coverage.xml
-                
-                echo "✓ Coverage subido a Codecov"
-                '''
-            }
-        }
-
-        stage('Smoke test /usuarios/registro') {
-            steps {
-                sh '''
-                echo "===> Ejecutando smoke test..."
-
-                EMAIL_CI="ci-user-${BUILD_NUMBER}@example.com"
-                echo "Email: ${EMAIL_CI}"
-
-                for i in {1..15}; do
-                    if docker compose exec -T api curl -sSf http://localhost:5000/docs > /dev/null 2>&1; then
-                        echo "✓ API disponible en intento $i"
-                        
-                        docker compose exec -T api \
-                          curl -X POST http://localhost:5000/usuarios/registro \
-                          -H "Content-Type: application/json" \
-                          -d "{\\"nombre\\":\\"CI\\",\\"apellido\\":\\"User\\",\\"correo\\":\\"${EMAIL_CI}\\",\\"contrasena\\":\\"ci1234\\"}"
-                        
-                        echo ""
-                        echo "✓ Smoke test completado"
+                max_attempts=20
+                attempt=1
+                while [ $attempt -le $max_attempts ]; do
+                    if docker compose exec -T api curl -sf http://localhost:5000/docs > /dev/null 2>&1; then
+                        echo "✓ API healthy"
                         exit 0
                     fi
-                    echo "Intento $i/15..."
-                    sleep 2
+                    echo "Wait... attempt $attempt/$max_attempts"
+                    attempt=$((attempt + 1))
+                    sleep 3
                 done
-
-                echo "❌ API no respondió"
+                echo "API timeout"
+                docker compose logs api
                 exit 1
+                '''
+            }
+        }
+
+        stage('Tests') {
+            steps {
+                sh '''
+                docker compose exec -T api pytest \
+                  --cov=. \
+                  --cov-report=xml \
+                  --cov-report=html \
+                  --cov-report=term-missing \
+                  -v
+                '''
+            }
+        }
+
+        stage('Reportes') {
+            steps {
+                sh '''
+                mkdir -p coverage
+                docker compose cp api:/app/coverage.xml ./coverage.xml || true
+                docker compose cp api:/app/htmlcov ./htmlcov || true
+                '''
+            }
+        }
+
+        stage('Codecov') {
+            steps {
+                sh '''
+                if [ -f coverage.xml ]; then
+                    curl -Os https://uploader.codecov.io/latest/linux/codecov
+                    chmod +x codecov
+                    ./codecov -t ${CODECOV_TOKEN} -f coverage.xml || true
+                fi
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                EMAIL="ci-${BUILD_NUMBER}-${RANDOM}@example.com"
+                docker compose exec -T api curl -s -X POST http://localhost:5000/usuarios/registro \
+                  -H "Content-Type: application/json" \
+                  -d "{\"nombre\":\"CI\",\"apellido\":\"User\",\"correo\":\"$EMAIL\",\"contrasena\":\"ci1234\"}" \
+                  | grep -q "id" || exit 1
                 '''
             }
         }
@@ -138,28 +135,17 @@ EOF
     post {
         always {
             sh '''
-            echo "===> Limpiando contenedores..."
-            docker compose down -v --remove-orphans 2>/dev/null || true
-            
-            echo "===> Restaurando override..."
+            docker compose down -v --remove-orphans || true
             [ -f docker-compose.override.yml.bak ] && mv docker-compose.override.yml.bak docker-compose.override.yml || true
             '''
-            
-            // Publicar reporte de coverage en Jenkins
-            publishHTML([
-                allowMissing: false,
-                alwaysLinkToLastBuild: true,
-                keepAll: true,
-                reportDir: '.',
-                reportFiles: 'coverage.xml',
-                reportName: 'Coverage Report'
-            ])
         }
+
         success {
-            echo "✓ Pipeline completado correctamente"
+            echo "✅ Pipeline OK"
         }
+
         failure {
-            echo "❌ Pipeline falló - revisar logs"
+            sh 'docker compose logs api --tail=30 || true'
         }
     }
 }
