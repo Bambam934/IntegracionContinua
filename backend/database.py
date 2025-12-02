@@ -23,3 +23,4 @@ def obtener_sesion():
         yield db
     finally:
         db.close()
+
