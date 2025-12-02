@@ -72,18 +72,30 @@ def test_registro_usuario_datos_incompletos(client):
             "contrasena": "test1234"
         }
     )
-    assert response.status_code == 422  # Validation error
+    assert response.status_code == 422  
 
 
-def test_login_credenciales_invalidas(client):
-    """Test que login falla con credenciales inválidas"""
+
+
+def test_registro_usuario_correo_invalido(client):
+    """
+    Verifica que el backend rechaza el registro
+    cuando el correo NO tiene un formato válido.
+    """
     response = client.post(
-        "/usuarios/login",
+        "/usuarios/registro",
         json={
-            "correo": "no-existe@example.com",
-            "contrasena": "wrongpass"
-        }
+            "nombre": "Usuario Correo Malo",
+            "correo": "no-es-un-correo-valido",
+            "contrasena": "Password123!"
+        },
     )
-    assert response.status_code in [400, 401]
 
+    assert response.status_code == 422
 
+    data = response.json()
+    assert "detail" in data
+    assert any(
+        err.get("loc", [None])[-1] == "correo"
+        for err in data.get("detail", [])
+    )
