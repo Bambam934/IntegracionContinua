@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update && \
-    apt-get install -y curl && \
+    apt-get install -y curl postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

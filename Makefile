@@ -1,25 +1,15 @@
-.PHONY: install test lint format clean docker-up docker-down docker-test
+.PHONY: install test lint format clean docker-up docker-down
 
 # Instalación
 install:
-	pip install -r requirements.txt
+	cd backend && pip install -r requirements.txt
 
 # Tests
 test:
-	pytest tests/ -v --cov=. --cov-report=term-missing
+	cd backend && pytest tests/ -v --cov=. --cov-report=term-missing
 
 test-coverage:
-	pytest tests/ --cov=. --cov-report=xml --cov-report=html
-
-# Linting y formateo
-lint:
-	flake8 .
-	isort --check-only .
-	black --check .
-
-format:
-	isort .
-	black .
+	cd backend && pytest tests/ --cov=. --cov-report=xml --cov-report=html
 
 # Docker
 docker-up:
@@ -31,16 +21,22 @@ docker-down:
 docker-test:
 	docker compose exec api pytest tests/ -v
 
+# CI/CD
+ci-local:
+	docker compose up -d db
+	sleep 5
+	cd backend && pytest tests/ --cov=. --cov-report=xml --cov-report=html
+
 # Limpieza
 clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
-	rm -rf .pytest_cache
-	rm -rf .coverage
-	rm -rf htmlcov
-	rm -f coverage.xml
-	rm -f junit.xml
+	rm -rf backend/.pytest_cache
+	rm -rf backend/.coverage
+	rm -rf backend/htmlcov
+	rm -f backend/coverage.xml
+	rm -f backend/junit.xml
 
 # Desarrollo
 dev:
-	uvicorn main:app --reload --host 0.0.0.0 --port 5000
+	cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 5000

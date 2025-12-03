@@ -1,16 +1,23 @@
-import sys
-import os
-
-
-sys.path.insert(0, '/app')
-
+# main.py
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from database import Base, engine 
 from rutas import usuarios, credenciales
 import models
-Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Gestor de Contraseñas - Backend en Español")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: crear tablas
+    Base.metadata.create_all(bind=engine)
+    yield
+    # Shutdown: limpiar si es necesario
+    # engine.dispose()  # Opcional: cerrar conexiones
+
+app = FastAPI(
+    title="Gestor de Contraseñas - Backend en Español",
+    lifespan=lifespan
+)
+
 app.include_router(usuarios.router)
 app.include_router(credenciales.router)
 

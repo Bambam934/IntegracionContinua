@@ -1,55 +1,75 @@
-"""Configuración de fixtures para tests"""
-
+# tests/conftest.py
+import os
 import sys
-from pathlib import Path
 
-# Agregar backend al path (ya lo tenías)
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Agregar el directorio actual al path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + '/..')
+
+# Establecer entorno de prueba
+os.environ["TESTING"] = "true"
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from database import Base, get_db
+from main import app
+from fastapi.testclient import TestClient
 
-# Importamos lo necesario de tu app
-from database import Base, obtener_sesion
-from main import app  # OJO: ahora lo importamos después de definir el path
+# Configurar SQLite para pruebas
+TEST_DATABASE_URL = "sqlite:///./test.db"
 
-
-# 1. Crear engine de pruebas (SQLite)
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-
-engine_test = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},  # necesario con SQLite + FastAPI
-)
-
-TestingSessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine_test,
-)
-
-# 2. Crear las tablas en la BD de pruebas
-Base.metadata.create_all(bind=engine_test)
-
-
-# 3. Override de la dependencia obtener_sesion para que use SQLite en lugar de Postgres
-def override_obtener_sesion():
-    db = TestingSessionLocal()
+@pytest.fixture(scope="session")
+def engine():
+    """Fixture para el motor de base de datos."""
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    
+    # IMPORTANTE: En Windows, necesitamos disposar el motor
+    # para liberar el archivo de la base de datos
+    engine.dispose()
+    
+    # Esperar un momento para que Windows libere el archivo
+    import time
+    time.sleep(0.1)
+    
+    # Intentar eliminar el archivo, pero no fallar si no se puede
     try:
-        yield db
-    finally:
-        db.close()
+        if os.path.exists("test.db"):
+            os.remove("test.db")
+    except PermissionError:
+        print("⚠️ No se pudo eliminar test.db (puede estar bloqueado por Windows)")
 
-
-# Registramos el override en la app
-app.dependency_overrides[obtener_sesion] = override_obtener_sesion
-
-
-# 4. Fixture del cliente de tests
 @pytest.fixture
-def client():
-    """Cliente de test que usa BD de pruebas (SQLite), no Postgres real."""
-    with TestClient(app) as c:
-        yield c
+def db_session(engine):
+    """Fixture para sesiones de base de datos."""
+    connection = engine.connect()
+    transaction = connection.begin()
+    session = sessionmaker(bind=connection)()
+    
+    yield session
+    
+    session.close()
+    transaction.rollback()
+    connection.close()
+
+@pytest.fixture
+def client(db_session):
+    """Fixture para el cliente de pruebas."""
+    # Sobrescribir la dependencia de la base de datos
+    def override_get_db():
+        try:
+            yield db_session
+        finally:
+            pass
+    
+    app.dependency_overrides[get_db] = override_get_db
+    
+    with TestClient(app) as test_client:
+        yield test_client
+    
+    # Limpiar las dependencias sobrescritas
+    app.dependency_overrides.clear()
