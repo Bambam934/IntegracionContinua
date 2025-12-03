@@ -1,0 +1,18 @@
+# .codecov.yml
+coverage:
+  status:
+    project:
+      default:
+        target: 80%  # Cobertura mínima esperada
+        threshold: 5%  # Variación permitida
+    
+  # Ignorar estos archivos
+  ignore:
+    - "tests/*"
+    - "**/__init__.py"
+    - "**/*test*.py"
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
