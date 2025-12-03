@@ -4,67 +4,50 @@ services:
   db:
     build: ./database
     environment:
-      POSTGRES_USER: ${DB_USER:-vault}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-vaultpass}
-      POSTGRES_DB: ${DB_NAME:-vaultdb}
+      POSTGRES_DB: ${DB_NAME:-vault_db}
+      POSTGRES_USER: ${DB_USER:-vault_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-vault_password}
+    ports:
+      - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test:
-        ["CMD-SHELL", "pg_isready -U ${DB_USER:-vault} -d ${DB_NAME:-vaultdb}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-vault_user}"]
+      interval: 10s
       timeout: 5s
-      retries: 10
-    networks:
-      - internal_net
+      retries: 5
 
   api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: .env
+    build: ./backend
+    ports:
+      - "5000:5000"
     environment:
-      DB_USER: ${DB_USER:-vault}
-      DB_PASSWORD: ${DB_PASSWORD:-vaultpass}
       DB_HOST: db
-      DB_PORT: "5432"
-      DB_NAME: ${DB_NAME:-vaultdb}
-      SECRET_KEY: ${SECRET_KEY}
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-vault_db}
+      DB_USER: ${DB_USER:-vault_user}
+      DB_PASSWORD: ${DB_PASSWORD:-vault_password}
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-here}
+      FERNET_KEY: ${FERNET_KEY:-your-fernet-key-here}
       ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
-      FERNET_KEY: ${FERNET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      PYTHONPATH: /app
     depends_on:
       db:
         condition: service_healthy
-    networks:
-      - internal_net
     volumes:
       - ./backend:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 5000 --reload
 
   frontend:
-    build: ./frontend/frontAdministradorcontrasenas
-    depends_on:
-      - api
-    networks:
-      - internal_net
-
-  jenkins:
-    build: ./jenkins
-    container_name: jenkins
-    user: root
+    # Configura tu frontend aquí si es necesario
+    image: nginx:alpine
+    ports:
+      - "8080:80"
     volumes:
-      - jenkins_home:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock
-    networks:
-      - internal_net
+      - ./frontend:/usr/share/nginx/html
     depends_on:
       - api
-      - db
-      - frontend
 
 volumes:
-  pgdata:
-  jenkins_home:
-
-networks:
-  internal_net:
+  postgres_data:

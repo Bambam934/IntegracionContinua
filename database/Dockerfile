@@ -1,14 +1,9 @@
 FROM postgres:16-alpine
 
-# Valores por defecto 
-ENV POSTGRES_USER=vault \
-    POSTGRES_PASSWORD=vaultpass \
-    POSTGRES_DB=vaultdb
+COPY init/ /docker-entrypoint-initdb.d/
 
+ENV POSTGRES_DB=vault_db
+ENV POSTGRES_USER=vault_user
+ENV POSTGRES_PASSWORD=vault_password
 
-
-
-COPY init/*.sql /docker-entrypoint-initdb.d/
-
-# El entrypoint por defecto de la imagen oficial ya arranca postgres,
-# así que no necesitas CMD extra.
+EXPOSE 5432
