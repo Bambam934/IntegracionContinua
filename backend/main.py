@@ -1,8 +1,13 @@
+import sys
+import os
+
+
+sys.path.insert(0, '/app')
+
 from fastapi import FastAPI
 from database import Base, engine 
 from rutas import usuarios, credenciales
 import models
-
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Gestor de Contraseñas - Backend en Español")
