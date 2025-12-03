@@ -147,32 +147,32 @@ jobs:
         # Kill API process
         kill $API_PID 2>/dev/null || true
 
-   docker-build:
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+  docker-build:
+        needs: test
+        runs-on: ubuntu-latest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        
+        steps:
+        - name: Checkout code
+          uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v3
 
-    - name: Build API image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./backend
-        push: false
-        tags: password-manager-api:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        - name: Build API image
+          uses: docker/build-push-action@v5
+          with:
+            context: ./backend
+            push: false
+            tags: password-manager-api:latest
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
 
-    - name: Build DB image
-      uses: docker/build-push-action@v5
-      with:
-        context: ./database
-        push: false
-        tags: password-manager-db:latest
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        - name: Build DB image
+          uses: docker/build-push-action@v5
+          with:
+            context: ./database
+            push: false
+            tags: password-manager-db:latest
+            cache-from: type=gha
+            cache-to: type=gha,mode=max
